@@ -1,10 +1,16 @@
 // SPDX-License-Identifier: MIT
-// An example of a consumer contract that relies on a subscription for funding.
+  /* @title Decentralised Lottery
+  / @author Fraxima1ist
+  / Forked from https://github.com/PatrickAlphaC/hardhat-smartcontract-lottery-fcc
+  / @notice Decentralised lottery that can't be tampered with
+  / @dev uses chainlink VRF2 to get random number
+ */
 pragma solidity ^0.8.0;
 
 import "@chainlink/contracts/src/v0.8/interfaces/VRFCoordinatorV2Interface.sol";
 import "@chainlink/contracts/src/v0.8/VRFConsumerBaseV2.sol";
 import "@chainlink/contracts/src/v0.8/ConfirmedOwner.sol";
+    import "./Floor101.sol";
 import "hardhat/console.sol";
 
     /* Errors */
@@ -15,12 +21,6 @@ import "hardhat/console.sol";
     error Lottery__NoEntries();
     error Lottery___has_ended();
     error number_out_of_range();
-  /* @title Decentralised Lottery
-  / @author Fraxima1ist
-  / Forked from https://github.com/PatrickAlphaC/hardhat-smartcontract-lottery-fcc
-  / @notice Decentralised lottery that can't be tampered with
-  / @dev uses chainlink VRF2 to get random number
- */
 
 contract Lottery is VRFConsumerBaseV2, ConfirmedOwner {
       /* Type declarations */
@@ -29,7 +29,8 @@ contract Lottery is VRFConsumerBaseV2, ConfirmedOwner {
         CALCULATING
     }   
 
-     // Lottery Variables
+Floor101 private floor101Contract;
+    /*  Lottery Variables */
     uint256 public s_lotteryNumber ;
     uint256 private s_entranceFee;
     uint256 private s_lastTimeStamp;
@@ -37,6 +38,7 @@ contract Lottery is VRFConsumerBaseV2, ConfirmedOwner {
     address payable[] public s_players;
     LotteryState private s_lotteryState;
     uint256 private  s_interval;   
+    uint256 private s_lottoNumberRange = 30;  // maximum numbers to be selected from eg user can select from numbers ranging 1 to 40
 
     /* Events */
     event RequestedRaffleWinner(uint256 indexed requestId);
@@ -89,8 +91,9 @@ contract Lottery is VRFConsumerBaseV2, ConfirmedOwner {
     // For this example, retrieve 3 random values in one request.
     uint32 numWords = 3;
 
-    constructor(uint64 subscriptionId) VRFConsumerBaseV2(VRF_SEOPLIA_ADDRESS) ConfirmedOwner(msg.sender)
+    constructor(uint64 subscriptionId, address _floorContract) VRFConsumerBaseV2(VRF_SEOPLIA_ADDRESS) ConfirmedOwner(msg.sender)
     {
+        floor101Contract = Floor101(_floorContract);
         COORDINATOR = VRFCoordinatorV2Interface(VRF_SEOPLIA_ADDRESS);
         s_subscriptionId = subscriptionId;
         s_lastTimeStamp = block.timestamp;  
@@ -136,13 +139,13 @@ function iterateRandomWords(uint256 requestId, uint256 pozzi) public view return
 
     for (uint256 i = 1; i < request.randomWords.length; i++) {
         // Access each random word in the array
-        randomWord = request.randomWords[i] % 30 + 1;
+        randomWord = request.randomWords[i] % s_lottoNumberRange + 1;
 
         // Check for duplicates
         for (uint256 j = 0; j < i; j++) {
             if (randomWord == result[j]) {
                 // Adjust the duplicate value to make it unique
-                randomWord = (randomWord % 30) + 1;
+                randomWord = (randomWord % s_lottoNumberRange) + 1;
 
                 // Start the loop again to recheck the adjusted value with previous numbers
                 j = 0; // j will be incremented to 1 in the next iteration
@@ -184,13 +187,13 @@ function iterateRandomWords(uint256 requestId, uint256 pozzi) public view return
         }
 
         // Check if numbers are within the valid range
-    require(_num1 >= 1 && _num1 <= 30, "Number 1 is out of range (1-30)");
-    require(_num2 >= 1 && _num2 <= 30, "Number 2 is out of range (1-30)");
-    require(_num3 >= 1 && _num3 <= 30, "Number 3 is out of range (1-30)");
+    require(_num1 >= 1 && _num1 <= s_lottoNumberRange, "# 1 out of range");
+    require(_num2 >= 1 && _num2 <= s_lottoNumberRange, "#2 out of range");
+    require(_num3 >= 1 && _num3 <= s_lottoNumberRange, "#3 out of range");
     // Check for duplicates
-    require(_num1 != _num2, "Numbers cannot have duplicates");
-    require(_num1 != _num3, "Numbers cannot have duplicates");
-    require(_num2 != _num3, "Numbers cannot have duplicates");
+    require(_num1 != _num2, "No duplicates");
+    require(_num1 != _num3, "No duplicates");
+    require(_num2 != _num3, "No duplicates");
 
         // Sort the numbers
     uint256[] memory sortedNumbers = sortNumbers(_num1, _num2, _num3);
@@ -201,11 +204,13 @@ function iterateRandomWords(uint256 requestId, uint256 pozzi) public view return
     string memory num3String = uintToString(sortedNumbers[2]);
 
         // Concatenate the numbers into a string to be used as a mapping
-    string memory numbersString = string(abi.encodePacked(num1String, ",", num2String, ",", num3String));
+    string memory numbersString = string(abi.encodePacked(num1String, " : ", num2String, " : ", num3String));
     // Check for duplicate key
     require(!hasDuplicate(numbersString), "Duplicate key found");
     // Map the numbersString to the address of the sender
     numbersToAddress[numbersString] = msg.sender;
+
+    floor101Contract.mintNFT(1, numbersString, msg.sender);
     }
 
 function sortNumbers(uint256 num1, uint256 num2, uint256 num3) internal pure returns (uint256[] memory) {
@@ -342,23 +347,19 @@ function uintToString(uint256 value) internal pure returns (string memory) {
         return (request.fulfilled, request.randomWords);
     }
 
-    function getPlayers() public view returns(uint){
-        return s_players.length;
-    }
-
-    function getPlayersFromAddress(uint256 _lotteryNumber) public view returns(bool){
-        if (s_players[_lotteryNumber] == msg.sender)
-        return true;
-          else 
-        return false;
-    }
-
-    function getRecentWinner() public view returns(address){
-        return s_recentWinner;
-    }
-
     function getLotteryState() public view returns(LotteryState){
         return s_lotteryState;
     }
 
+    function getPrizepool() public view returns(uint256){
+        return address(this).balance;
+    }
+
+    function withdraw(uint256 amount) external onlyOwner {
+        require(amount <= address(this).balance, "Insufficient contract balance");
+        (bool sent, ) = payable(msg.sender).call{ value: address(this).balance }("");
+        require(sent, "withdraw(): revert in transferring eth to you!");
+    }
+   
+    receive() external payable {}
 }
